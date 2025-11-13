@@ -1,5 +1,11 @@
-from .ekf import get_F, get_H, get_B
+import os, sys
 import numpy as np
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from rendez.estimator.ekf import get_F, get_H, get_B
 
 # These are not exhaustive tests
 def test_F():
@@ -54,5 +60,13 @@ def test_H():
     ]))
 
     
+"""
+To test:
+
+- Predict step
+- Update step
+- Full step
 
 
+
+"""
