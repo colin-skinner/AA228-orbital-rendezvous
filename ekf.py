@@ -16,13 +16,12 @@ class State:
     P: np.ndarray
     dim: int
 
-
 # def predict(x, u, F, B, P):
-def run(state: State, ekf: Ekf, u: np.ndarray, z: np.ndarray):
+def run_ekf(state: State, ekf: Ekf, u: np.ndarray, z: np.ndarray):
     F, B, H, Q, R = ekf.F, ekf.B, ekf.H, ekf.Q, ekf.R
     x, P = state.x, state.P
     dim = state.dim # Should be the same as ekf dim
-
+    
     # Predict
     x_est = F @ x + B @ u
     P_est = F @ P @ F.T + Q
