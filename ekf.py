@@ -12,10 +12,10 @@ class LinearEkf:
 
 @dataclass
 class NonlinearEkf:
-    f: Callable
-    F: Callable
-    h: Callable
-    H: Callable
+    f: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    F: Callable[[np.ndarray], np.ndarray]
+    h: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    H: Callable[[np.ndarray], np.ndarray]
     Q: np.ndarray
     R: np.ndarray
 
