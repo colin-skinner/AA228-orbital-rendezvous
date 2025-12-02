@@ -40,7 +40,7 @@ class SimParams:
         self.noise = noise
         self.n = mean_motion_rad_s
 
-        print(f"Created simulation lasting {self.t_tot_sec:.2f} sec ({self.t_tot_min:.2f} min)")
+        print(f"Created simulation lasting {self.t_tot_sec:.2f} sec ({self.t_tot_min:.2f} min) with {self.N} steps")
 
 class SimType(Enum):
     mass_varying_with_thrust = 0
@@ -134,6 +134,9 @@ def simulate_with_thrust(Ad, Bd, Qd, H, R, x0, thrust, m0, m_dot, dt, N, rng_see
     Y_meas = np.zeros((N, H.shape[0]))
     Y_true = np.zeros((N, H.shape[0]))
 
+    # Stores all simulated inputs (acceleration, for example)
+    U_meas = np.zeros((N, 3)) # for ax, ay, az
+
     # Errors
 
     # Set initial true state
@@ -176,8 +179,9 @@ def simulate_with_thrust(Ad, Bd, Qd, H, R, x0, thrust, m0, m_dot, dt, N, rng_see
         X_true[k+1] = x_next
         Y_true[k]   = y
         Y_meas[k]   = y + v
+        U_meas[k] = u
 
-    return X_true, Y_true, Y_meas
+    return X_true, Y_true, Y_meas, U_meas
 
 def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
     rng = np.random.default_rng(rng_seed)
@@ -187,6 +191,9 @@ def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
     # Store all measurements y_k (size depends on H: 3 for pos-only, 6 for full-state)
     Y_meas = np.zeros((N, H.shape[0]))
     Y_true = np.zeros((N, H.shape[0]))
+
+    # Stores all simulated inputs (acceleration, for example)
+    U_meas = np.zeros((N, 3)) # for ax, ay, az
 
     # Set initial true state
     X_true[0] = x0
@@ -214,8 +221,9 @@ def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
         X_true[k+1] = x_next
         Y_true[k]   = y
         Y_meas[k]   = y + v
+        U_meas[k] = U[k]
 
-    return X_true, Y_true, Y_meas
+    return X_true, Y_true, Y_meas, U_meas
 
 
 ####################################################################################################
@@ -244,7 +252,7 @@ class HCWDynamics_3DOF:
 
         # Will be many more cases for simulation, but there are only a couple right now
         if simtype == SimType.mass_varying_with_thrust:
-            X_true, Y_true, Y_meas = simulate_with_thrust(
+            X_true, Y_true, Y_meas, U_meas = simulate_with_thrust(
                 self.Ad, self.Bd, self.Qd, H, R, self.state0,
                 self.sat.thrusters[0].thrust_N, self.sat.mass_kg,
                 self.sat.thrusters[0].m_dot_kg_s, self.sim.dt,
@@ -253,16 +261,18 @@ class HCWDynamics_3DOF:
         elif simtype == SimType.mass_constant:
             if U is None:
                 raise ValueError("For non-thrust simulation, must input U")
-            X_true, Y_true, Y_meas = simulate(
+            X_true, Y_true, Y_meas, U_meas = simulate(
                 self.Ad, self.Bd, self.Qd, H, R, self.state0,
                 U, self.sim.N, rng_seed
             )
         else:
             raise NotImplementedError("Sim type is not implemented")
 
-        self.X_true, self.Y_true, self.Y_meas = X_true, Y_true, Y_meas
+        self.X_true, self.Y_true, self.Y_meas, self.U_meas = X_true, Y_true, Y_meas, U_meas
 
         # Project true state into measurement space so sizes match
         self.state_err = Y_meas - (H @ X_true[1:].T).T  # shape (N, meas_dim)
 
-        return X_true, Y_true, Y_meas, self.state_err
+        print("Simulated!")
+
+        return X_true, Y_true, Y_meas, self.state_err, U_meas
