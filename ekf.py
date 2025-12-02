@@ -1,29 +1,38 @@
 import numpy as np
 from dataclasses import dataclass
+from collections.abc import Callable
 
 @dataclass
-class Ekf:
+class LinearEkf:
     F: np.ndarray
     B: np.ndarray
     H: np.ndarray
     Q: np.ndarray
     R: np.ndarray
-    dim: int
+
+@dataclass
+class NonlinearEkf:
+    f: Callable
+    F: Callable
+    h: Callable
+    H: Callable
+    Q: np.ndarray
+    R: np.ndarray
 
 @dataclass
 class State:
-    x: np.ndarray
-    P: np.ndarray
-    dim: int
+    x: np.ndarray  # Mean vector
+    P: np.ndarray  # Covariance matrix
 
-# def predict(x, u, F, B, P):
-def run_ekf(state: State, ekf: Ekf, u: np.ndarray, z: np.ndarray):
+def run_linear_ekf(state: State, ekf: LinearEkf, u: np.ndarray, z: np.ndarray):
     F, B, H, Q, R = ekf.F, ekf.B, ekf.H, ekf.Q, ekf.R
     x, P = state.x, state.P
-    dim = state.dim # Should be the same as ekf dim
+    dim = len(ekf.F)
     
     # Predict
-    x_est = F @ x + B @ u
+    x_est = F @ x 
+    if B is not None and u is not None: 
+        x_est += B @ u
     P_est = F @ P @ F.T + Q
 
     # Update
@@ -31,7 +40,27 @@ def run_ekf(state: State, ekf: Ekf, u: np.ndarray, z: np.ndarray):
     S = H @ P_est @ H.T + R
     K = P_est @ H.T @ np.linalg.inv(S)
     x_next = x_est + K @ y_err
-    P_next = (np.eye(dim) - K@H) @ P_est @ (np.eye(dim) - K@H).T + K@R@K.T
+    P_next = (np.eye(dim) - K@H) @ P_est
+    # P_next = (np.eye(dim) - K@H) @ P_est @ (np.eye(dim) - K@H).T + K@R@K.T # Joseph form (not used)
 
-    return State(x_next, P_next, dim)
+    return State(x_next, P_next)
+
+def run_nonlinear_ekf(state: State, ekf: NonlinearEkf, u: np.ndarray, z: np.ndarray):
+    f, F, h, H, Q, R = ekf.f, ekf.F, ekf.h, ekf.H, ekf.Q, ekf.R
+    x, P = state.x, state.P
+    dim = len(ekf.F)
+    
+    # Predict
+    x_est = f(x,u)
+    P_est = F @ P @ F.T + Q
+
+    # Update
+    y_err = z - h(x_est)
+    S = H @ P_est @ H.T + R
+    K = P_est @ H.T @ np.linalg.inv(S)
+    x_next = x_est + K @ y_err
+    P_next = (np.eye(dim) - K@H) @ P_est 
+    # P_next = (np.eye(dim) - K@H) @ P_est @ (np.eye(dim) - K@H).T + K@R@K.T # Joseph form (not used)
+
+    return State(x_next, P_next)
 
