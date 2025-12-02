@@ -27,7 +27,7 @@ class State:
 def run_linear_ekf(state: State, ekf: LinearEkf, u: np.ndarray, z: np.ndarray):
     F, B, H, Q, R = ekf.F, ekf.B, ekf.H, ekf.Q, ekf.R
     x, P = state.x, state.P
-    dim = len(ekf.F)
+    dim = len(state.x)
     
     # Predict
     x_est = F @ x 
@@ -46,16 +46,18 @@ def run_linear_ekf(state: State, ekf: LinearEkf, u: np.ndarray, z: np.ndarray):
     return State(x_next, P_next)
 
 def run_nonlinear_ekf(state: State, ekf: NonlinearEkf, u: np.ndarray, z: np.ndarray):
-    f, F, h, H, Q, R = ekf.f, ekf.F, ekf.h, ekf.H, ekf.Q, ekf.R
+    f, get_F, h, H_func, Q, R = ekf.f, ekf.F, ekf.h, ekf.H, ekf.Q, ekf.R
     x, P = state.x, state.P
-    dim = len(ekf.F)
+    dim = len(state.x)
     
     # Predict
     x_est = f(x,u)
+    F = get_F(x)
     P_est = F @ P @ F.T + Q
 
     # Update
     y_err = z - h(x_est)
+    H = H_func(x)
     S = H @ P_est @ H.T + R
     K = P_est @ H.T @ np.linalg.inv(S)
     x_next = x_est + K @ y_err
