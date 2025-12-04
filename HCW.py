@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import expm, block_diag
 from enum import Enum
+from collections.abc import Callable
 
 ####################################################################################################
 #               Simulation Classes/Structs to make things easier
@@ -246,6 +247,14 @@ def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean
     az = (-n*n*z) + Fz/m
 
     return np.array([vx, vy, vz, ax, ay, az])
+
+def rk4(dt: float, t: float, x: np.ndarray, x_dot_func: Callable[[float, np.ndarray], np.ndarray]):
+    k1 = x_dot_func(t, x)
+    k2 = x_dot_func(t + 0.5*dt, x + 0.5*dt*k1)
+    k3 = x_dot_func(t + 0.5*dt, x + 0.5*dt*k2)
+    k4 = x_dot_func(t + dt, x + dt*k3)
+
+    return x + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
 
 ####################################################################################################
 #               Actual HCW Simulation
