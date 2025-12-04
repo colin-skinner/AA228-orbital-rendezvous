@@ -22,15 +22,18 @@ class SatParams:
         for t in self.thrusters:
             t.accel_m_s2 = t.thrust_N / self.mass_kg
 
+
+# sigma_accel controls the strength of process noise Q.
+# Increase to make EKF trust sensors more. Decrease to trust dynamics more.
 class NoiseParams:
     def __init__(self, sigma_accel: float, sigma_pos: float, sigma_vel: float):
-        self.sigma_accel = sigma_accel
+        self.sigma_accel = sigma_accel  # TUNE THIS FOR PROCESS NOISE Q
         self.sigma_pos = sigma_pos
         self.sigma_vel = sigma_vel
 
 class SimParams:
     def __init__(self, dt: float,
-                 n_steps: float,
+                 n_steps: int,
                  noise: NoiseParams,
                  mean_motion_rad_s = 0.0011):
         self.dt = dt
@@ -59,6 +62,7 @@ def hcw_continuous_AB(n):
     A[0,3] = 1.0 # row 0 column 3
     A[1,4] = 1.0
     A[2,5] = 1.0
+    
     # HCW accelerations (dynamics)
     # ẍ - 2 n ẏ - 3 n^2 x = ax
     # ÿ + 2 n ẋ           = ay
@@ -243,7 +247,7 @@ class HCWDynamics_3DOF:
 
         A, B = hcw_continuous_AB(n)
         Ad, Bd = c2d_van_loan(A, B, dt)
-        Qd = Qd_from_accel_white(dt, sigma_accel)
+        Qd = Qd_from_accel_white(dt, sigma_accel)  # where we tune covariance Q
 
         self.A, self.B, self.Ad, self.Bd, self.Qd = A, B, Ad, Bd, Qd
         self.t_array = np.arange(self.sim.N + 1) * dt
