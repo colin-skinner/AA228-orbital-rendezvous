@@ -225,6 +225,27 @@ def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
 
     return X_true, Y_true, Y_meas, U_meas
 
+def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean_motion: float):
+    """Simulates one step according to hill's differential equation.
+    I want to see if this gives the same accuracy as doing the discrete Ad and Bd
+
+    Args:
+        state (np.ndarray): [x, y, z, vx, vy, vz]
+        input (np.ndarray): [Fx, Fy, Fz]
+
+    Returns:
+        np.ndarray: [vx, vy, vz, ax, ay, az]
+    """
+    x, _, z, vx, vy, vz = state
+    Fx, Fy, Fz = input_N
+    n = mean_motion
+    m = mass_kg
+
+    ax = (3*n*n*x + 2*n*vy) + Fx/m
+    ay = (-2*n*vx) + Fy/m
+    az = (-n*n*z) + Fz/m
+
+    return np.array([vx, vy, vz, ax, ay, az])
 
 ####################################################################################################
 #               Actual HCW Simulation
