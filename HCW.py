@@ -2,6 +2,7 @@ import numpy as np
 from scipy.linalg import expm, block_diag
 from enum import Enum
 from collections.abc import Callable
+from scipy.linalg import norm
 
 ####################################################################################################
 #               Simulation Classes/Structs to make things easier
@@ -46,6 +47,13 @@ class SimParams:
 class SimType(Enum):
     mass_varying_with_thrust = 0
     mass_constant = 1
+
+class HCW_Params:
+    Ad: np.ndarray
+    Bd: np.ndarray
+    Qd: np.ndarray
+    H: np.ndarray
+    R: np.ndarray
 
 ####################################################################################################
 #               Clohessy–Wiltshire Equations
@@ -248,13 +256,67 @@ def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean
 
     return np.array([vx, vy, vz, ax, ay, az])
 
-def rk4(dt: float, t: float, x: np.ndarray, x_dot_func: Callable[[float, np.ndarray], np.ndarray]):
-    k1 = x_dot_func(t, x)
-    k2 = x_dot_func(t + 0.5*dt, x + 0.5*dt*k1)
-    k3 = x_dot_func(t + 0.5*dt, x + 0.5*dt*k2)
-    k4 = x_dot_func(t + dt, x + dt*k3)
+def rk4(dt: float, x: np.ndarray, x_dot_func: Callable[[float, np.ndarray], np.ndarray],
+        input_N: float, mass_kg: float, mean_motion: float):
+    """Baby version of RK4 (no time, much more inputs)"""
+    k1 = x_dot_func(x, input_N, mass_kg, mean_motion)
+    k2 = x_dot_func(x + 0.5*dt*k1, input_N, mass_kg, mean_motion)
+    k3 = x_dot_func(x + 0.5*dt*k2, input_N, mass_kg, mean_motion)
+    k4 = x_dot_func(x + dt*k3, input_N, mass_kg, mean_motion)
 
     return x + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+
+def simulate_step_discrete(state: np.ndarray, input_N: np.ndarray,
+                           hcw_params: HCW_Params,
+                           rng_seed: int = 42
+                           ):
+    """Essentially turns a (s, a) -> (s', o). Reward is calculated after. Use HCW_Params"""
+
+    Ad, Bd, Qd, R, H = hcw_params.Ad, hcw_params.Bd, hcw_params.Qd, hcw_params.R, hcw_params.H
+    rng = np.random.default_rng(rng_seed)
+
+    # Process noise w_k ~ N(0, Qd)
+    # This represents unmodeled forces (J2, drag, thrust errors, etc.)
+    w = rng.multivariate_normal(len(Ad), Qd)
+
+    # True dynamics:
+    # x_{k+1} = Ad * x_k + Bd * u_k + w_k
+    next_state = Ad @ state + Bd @ input_N + w
+
+    # Measurement noise v_k ~ N(0, R)
+    v = rng.multivariate_normal(len(input_N), R)
+
+    # Measurement model:
+    # y_k = H * x_{k+1} + v_k
+    # (note: measurement of the NEW state)
+    measurement = H @ next_state
+
+    # Returns:
+    # - true state
+    # - measurement
+    # - true measurement (for comparison)
+    return (next_state,
+            measurement,
+            measurement + v)
+
+def reward_1(next_state: np.ndarray, input_N: np.ndarray, m0: float, mass_kg: float):
+    """(s',a) --> (r)   Should the reward also be a function of action too?"""
+    s, _ = next_state, input_N
+
+    r = norm(s[:3])
+    v = norm(s[3:6])
+    R_dist = -r
+
+    # If closer than 100 meters, give reward for slow behavior
+    R_vel = 0 if r > 100 else -np.sqrt(v)
+
+    # Fuel reward
+    R_mass = 100 * mass_kg/m0 - 50
+    
+
+    return R_dist + R_vel + R_mass
+
+    
 
 ####################################################################################################
 #               Actual HCW Simulation
