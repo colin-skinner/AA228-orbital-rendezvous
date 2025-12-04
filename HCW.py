@@ -3,7 +3,9 @@ from scipy.linalg import expm, block_diag
 from enum import Enum
 from collections.abc import Callable
 from scipy.linalg import norm
+from dataclasses import dataclass
 
+# TODO: REPLACE CLASSES WITH DATACLASSES AND __POST_INIT__(self)
 ####################################################################################################
 #               Simulation Classes/Structs to make things easier
 ####################################################################################################
@@ -48,6 +50,11 @@ class SimType(Enum):
     mass_varying_with_thrust = 0
     mass_constant = 1
 
+class RewardType(Enum):
+    reward_1 = 0
+    reward_2 = 1
+
+@dataclass
 class HCW_Params:
     Ad: np.ndarray
     Bd: np.ndarray
@@ -234,7 +241,7 @@ def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
 
     return X_true, Y_true, Y_meas, U_meas
 
-def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean_motion: float):
+def hill_derivative(state: np.ndarray, input_a: np.ndarray, mass_kg: float, mean_motion: float):
     """Simulates one step according to hill's differential equation.
     I want to see if this gives the same accuracy as doing the discrete Ad and Bd
 
@@ -246,7 +253,7 @@ def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean
         np.ndarray: [vx, vy, vz, ax, ay, az]
     """
     x, _, z, vx, vy, vz = state
-    Fx, Fy, Fz = input_N
+    Fx, Fy, Fz = input_a
     n = mean_motion
     m = mass_kg
 
@@ -257,16 +264,16 @@ def hill_derivative(state: np.ndarray, input_N: np.ndarray, mass_kg: float, mean
     return np.array([vx, vy, vz, ax, ay, az])
 
 def rk4(dt: float, x: np.ndarray, x_dot_func: Callable[[float, np.ndarray], np.ndarray],
-        input_N: float, mass_kg: float, mean_motion: float):
+        input_a: float, mass_kg: float, mean_motion: float):
     """Baby version of RK4 (no time, much more inputs)"""
-    k1 = x_dot_func(x, input_N, mass_kg, mean_motion)
-    k2 = x_dot_func(x + 0.5*dt*k1, input_N, mass_kg, mean_motion)
-    k3 = x_dot_func(x + 0.5*dt*k2, input_N, mass_kg, mean_motion)
-    k4 = x_dot_func(x + dt*k3, input_N, mass_kg, mean_motion)
+    k1 = x_dot_func(x, input_a, mass_kg, mean_motion)
+    k2 = x_dot_func(x + 0.5*dt*k1, input_a, mass_kg, mean_motion)
+    k3 = x_dot_func(x + 0.5*dt*k2, input_a, mass_kg, mean_motion)
+    k4 = x_dot_func(x + dt*k3, input_a, mass_kg, mean_motion)
 
     return x + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
 
-def simulate_step_discrete(state: np.ndarray, input_N: np.ndarray,
+def simulate_step_discrete(state: np.ndarray, input_a: np.ndarray,
                            hcw_params: HCW_Params,
                            rng_seed: int = 42
                            ):
@@ -281,10 +288,10 @@ def simulate_step_discrete(state: np.ndarray, input_N: np.ndarray,
 
     # True dynamics:
     # x_{k+1} = Ad * x_k + Bd * u_k + w_k
-    next_state = Ad @ state + Bd @ input_N + w
+    next_state = Ad @ state + Bd @ input_a + w
 
     # Measurement noise v_k ~ N(0, R)
-    v = rng.multivariate_normal(len(input_N), R)
+    v = rng.multivariate_normal(len(input_a), R)
 
     # Measurement model:
     # y_k = H * x_{k+1} + v_k
@@ -299,9 +306,9 @@ def simulate_step_discrete(state: np.ndarray, input_N: np.ndarray,
             measurement,
             measurement + v)
 
-def reward_1(next_state: np.ndarray, input_N: np.ndarray, m0: float, mass_kg: float):
+def reward_1(next_state: np.ndarray, input_a: np.ndarray, m0: float, mass_kg: float):
     """(s',a) --> (r)   Should the reward also be a function of action too?"""
-    s, _ = next_state, input_N
+    s, _ = next_state, input_a
 
     r = norm(s[:3])
     v = norm(s[3:6])
@@ -315,6 +322,25 @@ def reward_1(next_state: np.ndarray, input_N: np.ndarray, m0: float, mass_kg: fl
     
 
     return R_dist + R_vel + R_mass
+
+def simulate_step(state: np.ndarray, action: np.ndarray, reward_type: RewardType,
+                  hcw_params: HCW_Params, m0: float, mass_kg: float, rng_seed = 42):
+    """TRO function that takes the state, action, and some other things and outputs
+    next state, reward, observation, and truth measurement (for error comparison)"""
+
+    next_state, observation, truth_measurement = \
+        simulate_step_discrete(state, action, hcw_params, rng_seed)
+    
+    match reward_type:
+        case RewardType.reward_1:
+            reward = reward_1(next_state, action, m0, mass_kg)
+        
+        case _: 
+            reward = -np.inf
+
+    return next_state, reward, observation, truth_measurement
+
+    
 
     
 

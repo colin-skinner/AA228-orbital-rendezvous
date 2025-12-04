@@ -13,7 +13,7 @@ class POMDP:
 
 
 class MCTS:
-    def __init__(self, problem, depth=10, num_sims=100, c=1.0, rollout=None, rollout_depth=10):
+    def __init__(self, problem: POMDP, depth=10, num_sims=100, c=1.0, rollout=None, rollout_depth=10):
         self.P = problem
         self.N = {}  # visit counts
         self.Q = {}  # action-value estimates
@@ -61,7 +61,7 @@ def sample_state(states, belief):
     return np.random.multivariate_normal(belief.x, belief.P)
 
 
-def greedy_rollout(problem, s, depth):
+def greedy_rollout(problem: POMDP, s, depth):
     """Greedy rollout: at each step, pick action that maximizes immediate reward."""
     total = 0.0
     for i in range(depth):
