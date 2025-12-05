@@ -8,6 +8,10 @@
 # - pomdp.py (planning over beliefs) - Enrico
 
 import numpy as np
+import pickle
+import matplotlib.pyplot as plt
+import sys # For args
+import cProfile
 
 from HCW import (
     SimParams,
@@ -182,6 +186,7 @@ def run_closed_loop_episode(
     sigma_accel_model: float = CONFIG["sigma_accel_model"],
     sigma_meas_pos: float = CONFIG["sigma_meas_pos"],
     seed: int = 42,
+    debug = True
 ):
     """
     Run one closed-loop rendezvous episode.
@@ -200,7 +205,7 @@ def run_closed_loop_episode(
 
     sim = SimParams(
         dt=CONFIG["dt"],
-        n_steps=CONFIG["N"],
+        n_steps=N,
         noise=noise,
         mean_motion_rad_s=CONFIG["mean_motion"],
     )
@@ -264,7 +269,7 @@ def run_closed_loop_episode(
     # -----------------------------
     # 4) POMDP + MCTS setup
     # -----------------------------
-    actions = [0, 1, 2]
+    actions = np.array([0, 1, 2])
     r_cfg = CONFIG["reward"]
     dock_tol_pos = r_cfg["dock_tol_pos"]
     dock_tol_vel = r_cfg["dock_tol_vel"]
@@ -409,7 +414,7 @@ def run_closed_loop_episode(
             np.linalg.norm(vel) < dock_cfg["dock_tol_vel"]):
             # Once docked, force coast action forever
             a_k = 0
-            ctions_log[k] = 0
+            actions_log[k] = 0
     # ---------------------------------------------------
 
         # Commanded accel
@@ -419,7 +424,7 @@ def run_closed_loop_episode(
         s_next, r_k, o_k = tro_func(s_true, a_k)
 
         # ---- DEBUG: first few steps
-        if k < 10:
+        if debug and k % 10 == 0:
             print(
                 f"[DEBUG] k={k}, x = {s_true[0]:8.3f} m, "
                 f"u_x = {u_cmd[0]:+8.3e} m/s^2, "
@@ -451,29 +456,78 @@ def run_closed_loop_episode(
         "actions": actions_log,
         "rewards": rewards_log,
         "pos_error_norm": pos_error_norm,
+        "N": N
     }
 
     return results
 
 
-# -----------------------------
-# test
-# -----------------------------
+# -------------------------------------------------------------------------------------------------------------------------------------------------
+#               MAIN FUNCTION
+# -------------------------------------------------------------------------------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    res = run_closed_loop_episode()
+    def main():
+        action = "run"
+        cache_name = "cache"
+        debug = False
 
-    X_true = res["X_true"]
-    X_hat = res["X_hat"]
-    actions = res["actions"]
-    rewards = res["rewards"]
-    pos_err = res["pos_error_norm"]
+        args = sys.argv
 
-    print("Simulation finished.")
-    print(f"True state shape:      {X_true.shape}")
-    print(f"Estimated state shape: {X_hat.shape}")
-    print(f"Number of steps:       {len(actions)}")
+        if len(args) > 1:
+            action = args[1]
 
-    print(f"First 10 actions:      {actions[:10]}")
-    print(f"Initial position error: {pos_err[0]:.3f} m")
-    print(f"Final position error:   {pos_err[-1]:.3f} m")
-    print(f"Total reward:           {np.sum(rewards):.3f}")
+        if len(args) > 2:
+            cache_name == str(args[2])
+        print(args)
+        
+        match action:
+            case "run":
+                res = run_closed_loop_episode(N=100, debug=debug)
+                print(f"Ran with {res["N"]} steps")
+
+            case "load":
+                print(f"Loading from {cache_name}")
+                with open(cache_name,"rb") as f:
+                    res = pickle.load(f)
+                print(f"Loaded with {res["N"]} steps")
+
+        if "save" in args:
+            print(f"Saved in {cache_name}")
+            with open(cache_name,"wb") as f:
+                pickle.dump(res, f)
+
+        print("\n\n")
+
+
+        X_true = res["X_true"]
+        X_hat = res["X_hat"]
+        actions = res["actions"]
+        rewards = res["rewards"]
+        pos_err = res["pos_error_norm"]
+
+        print("Simulation finished.")
+        print(f"True state shape:      {X_true.shape}")
+        print(f"Estimated state shape: {X_hat.shape}")
+        print(f"Number of steps:       {len(actions)}")
+
+        print(f"First 10 actions:      {actions[:10]}")
+        print(f"Initial position error: {pos_err[0]:.3f} m")
+        print(f"Final position error:   {pos_err[-1]:.3f} m")
+        print(f"Total reward:           {np.sum(rewards):.3f}")
+
+    cProfile.run('main()')
+        # plt.plot(X_true[:, 0])
+        # plt.show()
+
+    
+
+
+
+
+
+
+
+
+
+    

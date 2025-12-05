@@ -23,26 +23,28 @@ class MCTS:
         self.rollout = rollout if rollout else greedy_rollout
         self.rollout_depth = rollout_depth
 
+        # Store hashed versions of keys for time savings
+        self.actions_hashed = {a: self._key(a) for a in problem.A}
+
     def _key(self, a):
         """Return a hashable representation of action `a` for use as dict keys."""
-        import numpy as _np
-        if isinstance(a, _np.ndarray):
+        if isinstance(a, np.ndarray):
             return tuple(a.tolist())
         try:
             return a.item()
         except Exception:
             return a
-
+        
     def _hkey(self, h):
-        """Normalize a history tuple `h` (sequence of (a,o) pairs) into a fully hashable form."""
+        """Normalize a history tuple `h` (sequence of (a,o) pairs) into an index in the hashe"""
         if not h:
             return ()
-        return tuple((self._key(a), self._key(o)) for (a, o) in h)
+        return tuple((self.actions_hashed[a], self._key(o)) for (a, o) in h)
 
     def explore(self, h):
         hkey = self._hkey(h)
-        Nh = sum(self.N.get((hkey, self._key(a)), 0) for a in self.P.A)
-        return max(self.P.A, key=lambda a: self.Q.get((hkey, self._key(a)), 0.0) + self.c * bonus(self.N.get((hkey, self._key(a)), 0), Nh))
+        Nh = sum(self.N.get((hkey, self.actions_hashed[a]), 0) for a in self.P.A)
+        return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0) + self.c * bonus(self.N.get((hkey, self.actions_hashed[a]), 0), Nh))
 
     def simulate(self, s, h, d):
         if d <= 0:
@@ -52,8 +54,7 @@ class MCTS:
         # actions in self.P.A may be plain ints or numpy scalars; treat them uniformly
         hkey = self._hkey(h)
         if (hkey, self._key(self.P.A[0])) not in self.N:
-            for a in self.P.A:
-                ak = self._key(a)
+            for ak in self.actions_hashed.values():
                 self.N[(hkey, ak)] = 0
                 self.Q[(hkey, ak)] = 0.0
             return self.rollout(self.P, s, self.rollout_depth)
@@ -62,7 +63,7 @@ class MCTS:
         s_next, r, o = self.P.TRO(s, a)
         q = r + self.P.gamma * self.simulate(s_next, h + ((a, o),), d - 1)
 
-        ak = self._key(a)
+        ak = self.actions_hashed[a]
         self.N[(hkey, ak)] += 1
         self.Q[(hkey, ak)] += (q - self.Q[(hkey, ak)]) / self.N[(hkey, ak)]
         return q
@@ -72,7 +73,7 @@ class MCTS:
             s = sample_state(self.P.S, b)
             self.simulate(s, h, self.d)
         hkey = self._hkey(h)
-        return max(self.P.A, key=lambda a: self.Q.get((hkey, self._key(a)), 0.0))
+        return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0))
 
 
 def bonus(n, N):
