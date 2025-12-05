@@ -1,4 +1,5 @@
 import numpy as np
+from HCW import RolloutParams
 
 class POMDP:
     def __init__(self, gamma, states, actions, observations, transition, reward, observation, tro):
@@ -13,7 +14,8 @@ class POMDP:
 
 
 class MCTS:
-    def __init__(self, problem: POMDP, depth=10, num_sims=100, c=1.0, rollout=None, rollout_depth=10):
+    def __init__(self, problem: POMDP, depth=10, num_sims=100, c=1.0, rollout=None, rollout_depth=10,
+                 rollout_params: RolloutParams = None):
         self.P = problem
         self.N = {}  # visit counts
         self.Q = {}  # action-value estimates
@@ -22,23 +24,25 @@ class MCTS:
         self.c = c
         self.rollout = rollout if rollout else greedy_rollout
         self.rollout_depth = rollout_depth
+        self.rollout_params: RolloutParams = rollout_params
 
     def explore(self, h):
         Nh = sum(self.N.get((h, a), 0) for a in self.P.A)
         return max(self.P.A, key=lambda a: self.Q.get((h, a), 0.0) + self.c * bonus(self.N.get((h, a), 0), Nh))
 
     def simulate(self, s, h, d):
+        """Added extra params"""
         if d <= 0:
-            return self.rollout(self.P, s, self.rollout_depth)
+            return self.rollout(self.P, s, self.rollout_depth, self.params)
 
         if (h, self.P.A[0]) not in self.N:
             for a in self.P.A:
                 self.N[(h, a)] = 0
                 self.Q[(h, a)] = 0.0
-            return self.rollout(self.P, s, self.rollout_depth)
+            return self.rollout(self.P, s, self.rollout_depth, self.params)
 
         a = self.explore(h)
-        s_next, r, o = self.P.TRO(s, a)
+        s_next, r, o = self.P.TRO(s, a, self.params)
         q = r + self.P.gamma * self.simulate(s_next, h + ((a, o),), d - 1)
 
         self.N[(h, a)] += 1
@@ -61,14 +65,15 @@ def sample_state(states, belief):
     return np.random.multivariate_normal(belief.x, belief.P)
 
 
-def greedy_rollout(problem: POMDP, s, depth):
-    """Greedy rollout: at each step, pick action that maximizes immediate reward."""
+def greedy_rollout(problem: POMDP, s, depth, params:RolloutParams = None):
+    """Greedy rollout: at each step, pick action that maximizes immediate reward.
+    Added extra params"""
     total = 0.0
     for i in range(depth):
         # Evaluate each action and pick the one with best immediate reward
         best_a, best_r, best_s = None, -np.inf, None
         for a in problem.A:
-            s_next, r, _ = problem.TRO(s, a)
+            s_next, r, _ = problem.TRO(s, a, params)
             if r > best_r:
                 best_a, best_r, best_s = a, r, s_next
         total += (problem.gamma ** i) * best_r

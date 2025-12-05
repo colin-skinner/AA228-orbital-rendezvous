@@ -62,6 +62,15 @@ class HCW_Params:
     H: np.ndarray
     R: np.ndarray
 
+@dataclass
+class RolloutParams:
+    reward_type: RewardType
+    m0_kg: float
+    curr_mass: float
+    hcw_params: HCW_Params
+    rng_seed = 42
+
+
 ####################################################################################################
 #               Clohessy–Wiltshire Equations
 ####################################################################################################
@@ -340,7 +349,6 @@ def simulate_step(state: np.ndarray, action: np.ndarray, reward_type: RewardType
 
     return next_state, reward, observation, truth_measurement
 
-    
 
     
 
