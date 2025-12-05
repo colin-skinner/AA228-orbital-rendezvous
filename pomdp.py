@@ -1,4 +1,5 @@
 import numpy as np
+from joblib import Parallel, delayed
 
 class POMDP:
     def __init__(self, gamma, states, actions, observations, transition, reward, observation, tro):
@@ -25,6 +26,11 @@ class MCTS:
 
         # Store hashed versions of keys for time savings
         self.actions_hashed = {a: self._key(a) for a in problem.A}
+
+        # Also changing histories to be stored not as hashed (takes a ton of time)
+        # but as indices in some array
+        # e.g. (a1,o1,a2,02) --> 0 or (a2,o1,a0,02) --> 12 
+        self.history_indices = []
 
     def _key(self, a):
         """Return a hashable representation of action `a` for use as dict keys."""
@@ -68,6 +74,7 @@ class MCTS:
         self.Q[(hkey, ak)] += (q - self.Q[(hkey, ak)]) / self.N[(hkey, ak)]
         return q
 
+
     def __call__(self, b, h=()):
         for _ in range(self.m):
             s = sample_state(self.P.S, b)
@@ -75,13 +82,24 @@ class MCTS:
         hkey = self._hkey(h)
         return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0))
 
+        def sim_once(_):
+            s = sample_state(self.P.S, b)
+            return self.simulate(s, h, self.d)
+        
+        Parallel(n_jobs=-1)(delayed(sim_once)(i) for i in range(self.m))
+        
+        hkey = self._hkey(h)
+        return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0))
 
 def bonus(n, N):
+    if n == 0:
+        return np.inf          # force unvisited actions to be tried
     return np.sqrt(np.log(N + 1) / (n + 1))
-
 
 def sample_state(states, belief):
     """Sample from EKF belief (Gaussian). belief is an ekf.State with mean x and covariance P."""
+    # L = np.linalg.cholesky(belief.P)
+    # return belief.x + L @ np.random.randn(len(belief.P))
     return np.random.multivariate_normal(belief.x, belief.P)
 
 
@@ -95,6 +113,8 @@ def greedy_rollout(problem, s, depth):
             s_next, r, _ = problem.TRO(s, a)
             if r > best_r:
                 best_a, best_r, best_s = a, r, s_next
+                # print(f"{best_r} ", end="")
         total += (problem.gamma ** i) * best_r
+        # print()
         s = best_s
     return total

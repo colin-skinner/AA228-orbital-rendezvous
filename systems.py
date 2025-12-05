@@ -121,6 +121,102 @@ def action_to_accel(action: int, sat: SatParams) -> np.ndarray:
     if action == 2:
         ax = -sat.thrusters[1].accel_m_s2
         return np.array([ax, 0.0, 0.0])
+    
+    if action == 3:
+        ax = sat.thrusters[0].accel_m_s2
+        return np.array([ax, 0.0, 0.0])
+
+    if action == 4:
+        ax = sat.thrusters[1].accel_m_s2
+        return np.array([ax, 0.0, 0.0])
+    
+
+
+    # Smaller fires
+    if action == 5:
+        ay = -sat.thrusters[0].accel_m_s2
+        return np.array([0.0, ay, 0.0])
+
+    if action == 6:
+        ay = -sat.thrusters[1].accel_m_s2
+        return np.array([0.0, ay, 0.0])
+    
+    if action == 7:
+        ay = sat.thrusters[0].accel_m_s2
+        return np.array([0.0, ay, 0.0])
+
+    if action == 8:
+        ay = sat.thrusters[1].accel_m_s2
+        return np.array([0.0, ay, 0.0])
+    
+    # Smaller fires
+    if action == 9:
+        az = -sat.thrusters[0].accel_m_s2
+        return np.array([0.0, 0.0, az])
+
+    if action == 10:
+        az = -sat.thrusters[1].accel_m_s2
+        return np.array([0.0, 0.0, az])
+    
+    if action == 11:
+        az = sat.thrusters[0].accel_m_s2
+        return np.array([0.0, 0.0, az])
+        
+    if action == 12:
+        az = sat.thrusters[1].accel_m_s2
+        return np.array([0.0, 0.0, az])
+    
+    # if action == 13:
+    #     ax = -sat.thrusters[0].accel_m_s2
+    #     return np.array([ax, 0.0, 0.0]) / 10
+
+    # if action == 14:
+    #     ax = -sat.thrusters[1].accel_m_s2
+    #     return np.array([ax, 0.0, 0.0]) / 10
+    
+    # if action == 15:
+    #     ax = sat.thrusters[0].accel_m_s2
+    #     return np.array([ax, 0.0, 0.0]) / 10
+
+    # if action == 16:
+    #     ax = sat.thrusters[1].accel_m_s2
+    #     return np.array([ax, 0.0, 0.0]) / 10
+    
+
+
+    # # Smaller fires
+    # if action == 17:
+    #     ay = -sat.thrusters[0].accel_m_s2
+    #     return np.array([0.0, ay, 0.0]) / 10
+
+    # if action == 18:
+    #     ay = -sat.thrusters[1].accel_m_s2
+    #     return np.array([0.0, ay, 0.0]) / 10
+    
+    # if action == 19:
+    #     ay = sat.thrusters[0].accel_m_s2
+    #     return np.array([0.0, ay, 0.0]) / 10
+
+    # if action == 20:
+    #     ay = sat.thrusters[1].accel_m_s2
+    #     return np.array([0.0, ay, 0.0]) / 10
+    
+    # # Smaller fires
+    # if action == 21:
+    #     az = -sat.thrusters[0].accel_m_s2
+    #     return np.array([0.0, 0.0, az]) / 10
+
+    # if action == 22:
+    #     az = -sat.thrusters[1].accel_m_s2
+    #     return np.array([0.0, 0.0, az]) / 10
+    
+    # if action == 23:
+    #     az = sat.thrusters[0].accel_m_s2
+    #     return np.array([0.0, 0.0, az]) / 10
+        
+    # if action == 24:
+    #     az = sat.thrusters[1].accel_m_s2
+    #     return np.array([0.0, 0.0, az]) / 10
 
     raise ValueError(f"Unknown action {action}")
 
@@ -136,6 +232,19 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
     - Do NOT penalize absolute distance directly (that was killing the planner).
     - Big bonus if we are close AND slow (docked).
     - Big penalty if we are close but too fast (impact).
+    
+    {
+       "reward": {
+        "w_pos": 10.0,          # weight on ||position||^2
+        "w_vel": 0.05,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
+        "w_u": 1e-6,            # weight on ||u||^2
+        "dock_bonus": 3000.0,  # big bonus when inside docking tolerances
+        "dock_tol_pos": 2.0,    # [m]
+        "dock_tol_vel": 0.3,   # [m/s]
+        "v_impact_thresh": 1.0, # [m/s] inside tol_pos but faster than this → crash
+        "big_crash_penalty": 5000.0,
+        "alpha": 20.0,           # weight on progress term (prev_dist - new_dist)
+    },
     """
     r_cfg = CONFIG["reward"]
 
@@ -157,7 +266,7 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
     new_dist  = np.linalg.norm(pos_next)
     progress  = prev_dist - new_dist          # >0 if closer, <0 if farther
     r = alpha * progress                      # main driver of behavior
-
+    
     # ---- 2. Small control penalty (fuel use) ----
     u_cost = w_u * np.dot(u_cmd, u_cmd)
     r -= u_cost
@@ -172,6 +281,8 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
         np.linalg.norm(vel_next) > v_impact_thresh):
         r -= big_crash_penalty
 
+    # if progress > 0:
+    # print(r)
     return r
 
 
@@ -269,7 +380,9 @@ def run_closed_loop_episode(
     # -----------------------------
     # 4) POMDP + MCTS setup
     # -----------------------------
-    actions = np.array([0, 1, 2])
+    n_actions = 12
+    actions = np.arange(n_actions + 1) 
+
     r_cfg = CONFIG["reward"]
     dock_tol_pos = r_cfg["dock_tol_pos"]
     dock_tol_vel = r_cfg["dock_tol_vel"]
@@ -429,6 +542,7 @@ def run_closed_loop_episode(
                 f"[DEBUG] k={k}, x = {s_true[0]:8.3f} m, "
                 f"u_x = {u_cmd[0]:+8.3e} m/s^2, "
                 f"x_next = {s_next[0]:8.3f} m, "
+                f"a_k = {a_k}, "
                 f"r = {r_k:8.3f}"
             )
 
@@ -450,6 +564,9 @@ def run_closed_loop_episode(
         rewards_log[k] = r_k
         pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
 
+        if r_k == 0:
+            break
+
     results = {
         "X_true": X_true,
         "X_hat": X_hat,
@@ -468,33 +585,32 @@ def run_closed_loop_episode(
 
 if __name__ == "__main__":
     def main():
-        action = "run"
         cache_name = "cache"
-        debug = False
+        debug = True
 
         args = sys.argv
 
-        if len(args) > 1:
-            action = args[1]
-
-        if len(args) > 2:
-            cache_name == str(args[2])
-        print(args)
-        
-        match action:
-            case "run":
-                res = run_closed_loop_episode(N=100, debug=debug)
-                print(f"Ran with {res["N"]} steps")
-
-            case "load":
-                print(f"Loading from {cache_name}")
-                with open(cache_name,"rb") as f:
-                    res = pickle.load(f)
-                print(f"Loaded with {res["N"]} steps")
+        for arg in args:
+            if ".cache" in arg:
+                print(f"Gonna save in {arg}")
+                cache_name = str(arg)
+                
+        # if len(args) > 2:
+        # print(args)
+            
+        if "load" in args:
+            print(f"Loading from {cache_name}")
+            with open("cache/" + cache_name,"rb") as f:
+                res = pickle.load(f)
+            print(f"Loaded with {res["N"]} steps")
+            
+        else: # Else just runs
+            res = run_closed_loop_episode(N=600, debug=debug)
+            print(f"Ran with {res["N"]} steps")
 
         if "save" in args:
             print(f"Saved in {cache_name}")
-            with open(cache_name,"wb") as f:
+            with open("cache/" + cache_name,"wb") as f:
                 pickle.dump(res, f)
 
         print("\n\n")
@@ -515,10 +631,19 @@ if __name__ == "__main__":
         print(f"Initial position error: {pos_err[0]:.3f} m")
         print(f"Final position error:   {pos_err[-1]:.3f} m")
         print(f"Total reward:           {np.sum(rewards):.3f}")
+        # plt.plot(X_true[:,:3])
+        # plt.show()
+        # plt.plot(X_hat)
+        # plt.show()
+        # plt.plot(actions)
+        # plt.show()
+        # plt.plot(rewards)
+        # plt.show()
+        # plt.plot(pos_err)
+        # plt.show()
 
     cProfile.run('main()')
-        # plt.plot(X_true[:, 0])
-        # plt.show()
+    # main()
 
     
 
