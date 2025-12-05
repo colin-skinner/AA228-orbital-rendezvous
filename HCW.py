@@ -139,7 +139,7 @@ def simulate_with_thrust(Ad, Bd, Qd, H, R, x0, thrust, m0, m_dot, dt, N, rng_see
     Y_true = np.zeros((N, H.shape[0]))
 
     # Stores all simulated inputs (acceleration, for example)
-    U_meas = np.zeros((N, 3)) # for ax, ay, az
+    U_meas = np.zeros((N, 3)) # stores applied acceleration [ax, ay, az]
 
     # Errors
 
@@ -151,10 +151,24 @@ def simulate_with_thrust(Ad, Bd, Qd, H, R, x0, thrust, m0, m_dot, dt, N, rng_see
     for k in range(N):
 
         # Physical quantities
+        # new
         if k < 80:
-            u = np.array([1,0,0]) * -thrust/m
+            thrust_cmd = np.array([1.0, 0.0, 0.0]) * -thrust  # or whatever the control wants
+            accel_cmd = thrust_cmd / m  # ideal acceleration (m/s^2)
+
+            accel_mag = np.linalg.norm(accel_cmd)
+            noise_std = 0.02 * accel_mag
+            accel_noise = rng.normal(0.0, noise_std, size=3) if noise_std > 0 else np.zeros(3)
+
+            u = accel_cmd + accel_noise
+
+
         else:
             u = np.zeros(3)
+
+        # DEBUG: print first few timesteps to see direction of motion
+        if k < 10:
+            print(f"[HCW DEBUG] k={k:3d}, x={X_true[k,0]:8.3f} m, u_x={u[0]: .4e} m/s^2")
 
 
         # Process noise w_k ~ N(0, Qd)
@@ -234,23 +248,69 @@ def simulate(Ad, Bd, Qd, H, R, x0, U, N, rng_seed=42):
 #               Actual HCW Simulation
 ####################################################################################################
 
+
+# NEW CHANGE TO THE CLASS!!!
+# ------------------------------------------------------------
+# Truth–Model Mismatch Capability
+# ------------------------------------------------------------
+# This class (below) now supports *different* dynamics for:
+#   (1) the truth simulation  – used to propagate the real system
+#   (2) the model dynamics    – used by the EKF inside the POMDP
+#
+# If `model_n` or `model_sigma_accel` are not given, they
+# default to the truth values, so there would be no mismatch.
+#
+# By allowing the model to use slightly incorrect parameters,
+# we simulate a realistic scenario where the filter and controller
+# do NOT have perfect knowledge of the true orbital dynamics.
+# This makes the rendezvous problem more realistic and strengthens
+# the research contribution.
+# ------------------------------------------------------------
+
+
 class HCWDynamics_3DOF:
     def __init__(self, simulation: SimParams, satellite: SatParams,
-                 state0: np.ndarray):
+                 state0: np.ndarray, model_n: float = None, model_sigma_accel: float = None):
         
         self.sim = simulation
         self.sat = satellite
         self.state0 = state0
         
-        n, dt = self.sim.n, self.sim.dt
-        sigma_accel = self.sim.noise.sigma_accel
+        n_truth = self.sim.n  # change to have “truth” HCW parameters and “model” HCW parameters
+        dt = self.sim.dt
+        sigma_truth = self.sim.noise.sigma_accel
 
-        A, B = hcw_continuous_AB(n)
-        Ad, Bd = c2d_van_loan(A, B, dt)
-        Qd = Qd_from_accel_white(dt, sigma_accel)  # where we tune covariance Q
+        # ---- TRUTH DYNAMICS (used in simulate) ----
+        A_truth, B_truth = hcw_continuous_AB(n_truth)
+        Ad_truth, Bd_truth = c2d_van_loan(A_truth, B_truth, dt)
+        Qd_truth = Qd_from_accel_white(dt, sigma_truth)
 
-        self.A, self.B, self.Ad, self.Bd, self.Qd = A, B, Ad, Bd, Qd
+        # store as the “default” ones for simulation
+        self.A      = A_truth
+        self.B      = B_truth
+        self.Ad     = Ad_truth
+        self.Bd     = Bd_truth
+        self.Qd     = Qd_truth
         self.t_array = np.arange(self.sim.N + 1) * dt
+
+        # ---- MODEL DYNAMICS (for EKF, possibly mismatched) ----
+        if model_n is None:
+            model_n = n_truth      # default: no mismatch in n
+        if model_sigma_accel is None:
+            model_sigma_accel = sigma_truth  # default: no mismatch in Q
+
+        A_model, B_model = hcw_continuous_AB(model_n)
+        Ad_model, Bd_model = c2d_van_loan(A_model, B_model, dt)
+        Qd_model = Qd_from_accel_white(dt, model_sigma_accel)
+
+        # store separately so EKF can use them later
+        self.A_model  = A_model
+        self.B_model  = B_model
+        self.Ad_model = Ad_model
+        self.Bd_model = Bd_model
+        self.Qd_model = Qd_model
+
+
 
     def simulate(self, H: np.ndarray, R: np.ndarray, U: np.ndarray = None, rng_seed = 42, simtype: SimType = SimType.mass_varying_with_thrust):
 
