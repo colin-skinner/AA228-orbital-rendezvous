@@ -1,5 +1,4 @@
 import numpy as np
-from joblib import Parallel, delayed
 
 class POMDP:
     def __init__(self, gamma, states, actions, observations, transition, reward, observation, tro):
@@ -79,15 +78,6 @@ class MCTS:
         for _ in range(self.m):
             s = sample_state(self.P.S, b)
             self.simulate(s, h, self.d)
-        hkey = self._hkey(h)
-        return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0))
-
-        def sim_once(_):
-            s = sample_state(self.P.S, b)
-            return self.simulate(s, h, self.d)
-        
-        Parallel(n_jobs=-1)(delayed(sim_once)(i) for i in range(self.m))
-        
         hkey = self._hkey(h)
         return max(self.P.A, key=lambda a: self.Q.get((hkey, self.actions_hashed[a]), 0.0))
 

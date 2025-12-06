@@ -49,7 +49,7 @@ CONFIG = {
     "sigma_meas_pos": 1.0,         # [m] per-axis position noise std for EKF R
 
     # --- initial state and belief (EKF) ---
-    "x0_true": np.array([50.0, 0.0, 0.0, 0.0, 0.0, 0.0]),   # start 50 m along x
+    "x0_true": np.array([50.0, 200.0, 1000.0, -40.0, 30.0, -12.0]),   # start 50 m along x
     "x0_hat_offset": np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]),
     "P0_diag": np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0]),
 
@@ -166,57 +166,57 @@ def action_to_accel(action: int, sat: SatParams) -> np.ndarray:
         az = sat.thrusters[1].accel_m_s2
         return np.array([0.0, 0.0, az])
     
-    # if action == 13:
-    #     ax = -sat.thrusters[0].accel_m_s2
-    #     return np.array([ax, 0.0, 0.0]) / 10
+    if action == 13:
+        ax = -sat.thrusters[0].accel_m_s2
+        return np.array([ax, 0.0, 0.0]) / 10
 
-    # if action == 14:
-    #     ax = -sat.thrusters[1].accel_m_s2
-    #     return np.array([ax, 0.0, 0.0]) / 10
+    if action == 14:
+        ax = -sat.thrusters[1].accel_m_s2
+        return np.array([ax, 0.0, 0.0]) / 10
     
-    # if action == 15:
-    #     ax = sat.thrusters[0].accel_m_s2
-    #     return np.array([ax, 0.0, 0.0]) / 10
+    if action == 15:
+        ax = sat.thrusters[0].accel_m_s2
+        return np.array([ax, 0.0, 0.0]) / 10
 
-    # if action == 16:
-    #     ax = sat.thrusters[1].accel_m_s2
-    #     return np.array([ax, 0.0, 0.0]) / 10
+    if action == 16:
+        ax = sat.thrusters[1].accel_m_s2
+        return np.array([ax, 0.0, 0.0]) / 10
     
 
 
-    # # Smaller fires
-    # if action == 17:
-    #     ay = -sat.thrusters[0].accel_m_s2
-    #     return np.array([0.0, ay, 0.0]) / 10
+    # Smaller fires
+    if action == 17:
+        ay = -sat.thrusters[0].accel_m_s2
+        return np.array([0.0, ay, 0.0]) / 10
 
-    # if action == 18:
-    #     ay = -sat.thrusters[1].accel_m_s2
-    #     return np.array([0.0, ay, 0.0]) / 10
+    if action == 18:
+        ay = -sat.thrusters[1].accel_m_s2
+        return np.array([0.0, ay, 0.0]) / 10
     
-    # if action == 19:
-    #     ay = sat.thrusters[0].accel_m_s2
-    #     return np.array([0.0, ay, 0.0]) / 10
+    if action == 19:
+        ay = sat.thrusters[0].accel_m_s2
+        return np.array([0.0, ay, 0.0]) / 10
 
-    # if action == 20:
-    #     ay = sat.thrusters[1].accel_m_s2
-    #     return np.array([0.0, ay, 0.0]) / 10
+    if action == 20:
+        ay = sat.thrusters[1].accel_m_s2
+        return np.array([0.0, ay, 0.0]) / 10
     
-    # # Smaller fires
-    # if action == 21:
-    #     az = -sat.thrusters[0].accel_m_s2
-    #     return np.array([0.0, 0.0, az]) / 10
+    # Smaller fires
+    if action == 21:
+        az = -sat.thrusters[0].accel_m_s2
+        return np.array([0.0, 0.0, az]) / 10
 
-    # if action == 22:
-    #     az = -sat.thrusters[1].accel_m_s2
-    #     return np.array([0.0, 0.0, az]) / 10
+    if action == 22:
+        az = -sat.thrusters[1].accel_m_s2
+        return np.array([0.0, 0.0, az]) / 10
     
-    # if action == 23:
-    #     az = sat.thrusters[0].accel_m_s2
-    #     return np.array([0.0, 0.0, az]) / 10
+    if action == 23:
+        az = sat.thrusters[0].accel_m_s2
+        return np.array([0.0, 0.0, az]) / 10
         
-    # if action == 24:
-    #     az = sat.thrusters[1].accel_m_s2
-    #     return np.array([0.0, 0.0, az]) / 10
+    if action == 24:
+        az = sat.thrusters[1].accel_m_s2
+        return np.array([0.0, 0.0, az]) / 10
 
     raise ValueError(f"Unknown action {action}")
 
@@ -380,7 +380,7 @@ def run_closed_loop_episode(
     # -----------------------------
     # 4) POMDP + MCTS setup
     # -----------------------------
-    n_actions = 12
+    n_actions = 24
     actions = np.arange(n_actions + 1) 
 
     r_cfg = CONFIG["reward"]
@@ -605,7 +605,7 @@ if __name__ == "__main__":
             print(f"Loaded with {res["N"]} steps")
             
         else: # Else just runs
-            res = run_closed_loop_episode(N=600, debug=debug)
+            res = run_closed_loop_episode(N=12000, debug=debug)
             print(f"Ran with {res["N"]} steps")
 
         if "save" in args:
@@ -631,19 +631,19 @@ if __name__ == "__main__":
         print(f"Initial position error: {pos_err[0]:.3f} m")
         print(f"Final position error:   {pos_err[-1]:.3f} m")
         print(f"Total reward:           {np.sum(rewards):.3f}")
-        # plt.plot(X_true[:,:3])
-        # plt.show()
-        # plt.plot(X_hat)
-        # plt.show()
-        # plt.plot(actions)
-        # plt.show()
-        # plt.plot(rewards)
-        # plt.show()
-        # plt.plot(pos_err)
-        # plt.show()
+        plt.plot(X_true[:,:3])
+        plt.show()
+        plt.plot(X_hat)
+        plt.show()
+        plt.scatter(np.arange(len(actions)), actions)
+        plt.show()
+        plt.plot(rewards)
+        plt.show()
+        plt.plot(pos_err)
+        plt.show()
 
-    cProfile.run('main()')
-    # main()
+    # cProfile.run('main()')
+    main()
 
     
 
