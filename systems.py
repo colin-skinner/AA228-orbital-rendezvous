@@ -26,65 +26,23 @@ from HCW import (
 from ekf import LinearEkf, State, run_linear_ekf
 from pomdp import POMDP, MCTS
 
-# -------------------------------------------------------
-# Simulation Variables
-# -------------------------------------------------------
-# Still need to work on tuning the simulation for better results
-# All variables are labeled and described so it is easier to understand and change
-CONFIG = {
-    # --- simulation setup ---
-    "dt": 1.0,                     # [s] simulation time step
-    "N": 600,                      # number of time steps (horizon = N * dt secs) Can make it longer for better results
-    "initial_state": np.zeros(6),  # 6-state vector [x,y,z,xdot,ydot,zdot]
-
-    # --- process / measurement noise scales (for Q and R) ---
-    "sigma_pos": 10.0,             # [m] (not used directly here)
-    "sigma_vel": 0.1,              # [m/s]
-    "sigma_accel": 0.01,           # [m/s^2]
-    "R_meas": np.diag([10.0, 10.0, 10.0]),  # legacy; EKF uses sigma_meas_pos below
-    "mean_motion": 0.0011,         # [rad/s] HCW mean motion n
-
-    "sigma_accel_truth": 1e-5,     # [m/s^2] accel noise std for TRUE process noise Q
-    "sigma_accel_model": 2e-5,     # [m/s^2] accel noise std for EKF model Q
-    "sigma_meas_pos": 1.0,         # [m] per-axis position noise std for EKF R
-
-    # --- initial state and belief (EKF) ---
-    "x0_true": np.array([50.0, 200.0, 1000.0, -40.0, 30.0, -12.0]),   # start 50 m along x
-    "x0_hat_offset": np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]),
-    "P0_diag": np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0]),
-
-    # --- reward shaping for the POMDP / MCTS ---
-    # See reward function later in the code
-    "reward": {
-        "w_pos": 10.0,          # weight on ||position||^2
-        "w_vel": 0.05,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
-        "w_u": 1e-6,            # weight on ||u||^2
-        "dock_bonus": 3000.0,  # big bonus when inside docking tolerances
-        "dock_tol_pos": 2.0,    # [m]
-        "dock_tol_vel": 0.3,   # [m/s]
-        "v_impact_thresh": 1.0, # [m/s] inside tol_pos but faster than this → crash
-        "big_crash_penalty": 5000.0,
-        "alpha": 20.0,           # weight on progress term (prev_dist - new_dist)
-    },
-}
-
 
 # -------------- manual HCW dynamics check -------------------
-def manual_hcw_test():
+def manual_hcw_test(config: dict):
     """
     Simple check: if we apply constant thrust toward the target (the origin),
     does the spacecraft actually get closer?
     This does NOT use POMDP or EKF — just the dynamics.
     """
 
-    dt = CONFIG["dt"]
-    N = CONFIG["N"]
-    n = CONFIG["mean_motion"]
+    dt = config["dt"]
+    N = config["N"]
+    n = config["mean_motion"]
 
     A, B = hcw_continuous_AB(n)
     Ad, Bd = c2d_van_loan(A, B, dt)
 
-    x = CONFIG["x0_true"].copy()
+    x = config["x0_true"].copy()
 
     # test constant accel toward origin
     coarse_acc = -0.05  # m/s^2 along -x as a sanity check
@@ -93,7 +51,7 @@ def manual_hcw_test():
     for _ in range(N):
         x = Ad @ x + Bd @ u_cmd
 
-    dist0 = np.linalg.norm(CONFIG["x0_true"][:3])
+    dist0 = np.linalg.norm(config["x0_true"][:3])
     dist1 = np.linalg.norm(x[:3])
 
     print("\n====== MANUAL HCW TEST ======")
@@ -110,121 +68,23 @@ def manual_hcw_test():
 # 1 = fine thrust along -x
 # 2 = coarse thrust along -x
 def action_to_accel(action: int, sat: SatParams) -> np.ndarray:
-    if action == 0:
-        return np.zeros(3)
-
-    # thrusters[0] = fine, thrusters[1] = coarse
-    if action == 1:
-        ax = -sat.thrusters[0].accel_m_s2
-        return np.array([ax, 0.0, 0.0])
-
-    if action == 2:
-        ax = -sat.thrusters[1].accel_m_s2
-        return np.array([ax, 0.0, 0.0])
     
-    if action == 3:
-        ax = sat.thrusters[0].accel_m_s2
-        return np.array([ax, 0.0, 0.0])
-
-    if action == 4:
-        ax = sat.thrusters[1].accel_m_s2
-        return np.array([ax, 0.0, 0.0])
-    
-
-
-    # Smaller fires
-    if action == 5:
-        ay = -sat.thrusters[0].accel_m_s2
-        return np.array([0.0, ay, 0.0])
-
-    if action == 6:
-        ay = -sat.thrusters[1].accel_m_s2
-        return np.array([0.0, ay, 0.0])
-    
-    if action == 7:
-        ay = sat.thrusters[0].accel_m_s2
-        return np.array([0.0, ay, 0.0])
-
-    if action == 8:
-        ay = sat.thrusters[1].accel_m_s2
-        return np.array([0.0, ay, 0.0])
-    
-    # Smaller fires
-    if action == 9:
-        az = -sat.thrusters[0].accel_m_s2
-        return np.array([0.0, 0.0, az])
-
-    if action == 10:
-        az = -sat.thrusters[1].accel_m_s2
-        return np.array([0.0, 0.0, az])
-    
-    if action == 11:
-        az = sat.thrusters[0].accel_m_s2
-        return np.array([0.0, 0.0, az])
-        
-    if action == 12:
-        az = sat.thrusters[1].accel_m_s2
-        return np.array([0.0, 0.0, az])
-    
-    if action == 13:
-        ax = -sat.thrusters[0].accel_m_s2
-        return np.array([ax, 0.0, 0.0]) / 10
-
-    if action == 14:
-        ax = -sat.thrusters[1].accel_m_s2
-        return np.array([ax, 0.0, 0.0]) / 10
-    
-    if action == 15:
-        ax = sat.thrusters[0].accel_m_s2
-        return np.array([ax, 0.0, 0.0]) / 10
-
-    if action == 16:
-        ax = sat.thrusters[1].accel_m_s2
-        return np.array([ax, 0.0, 0.0]) / 10
-    
-
-
-    # Smaller fires
-    if action == 17:
-        ay = -sat.thrusters[0].accel_m_s2
-        return np.array([0.0, ay, 0.0]) / 10
-
-    if action == 18:
-        ay = -sat.thrusters[1].accel_m_s2
-        return np.array([0.0, ay, 0.0]) / 10
-    
-    if action == 19:
-        ay = sat.thrusters[0].accel_m_s2
-        return np.array([0.0, ay, 0.0]) / 10
-
-    if action == 20:
-        ay = sat.thrusters[1].accel_m_s2
-        return np.array([0.0, ay, 0.0]) / 10
-    
-    # Smaller fires
-    if action == 21:
-        az = -sat.thrusters[0].accel_m_s2
-        return np.array([0.0, 0.0, az]) / 10
-
-    if action == 22:
-        az = -sat.thrusters[1].accel_m_s2
-        return np.array([0.0, 0.0, az]) / 10
-    
-    if action == 23:
-        az = sat.thrusters[0].accel_m_s2
-        return np.array([0.0, 0.0, az]) / 10
-        
-    if action == 24:
-        az = sat.thrusters[1].accel_m_s2
-        return np.array([0.0, 0.0, az]) / 10
-
-    raise ValueError(f"Unknown action {action}")
-
+    a = sat.thrusters[0].accel_m_s2
+    a_to_out = {
+        0: [0,0,0],
+        1: [a,0,0],
+        2: [-a,0,0],
+        3: [0,a,0],
+        4: [0,-a,0],
+        5: [0,0,a],
+        6: [0,0,-a]
+    }
+    return a_to_out[action]
 
 # -----------------------------
 # Reward function
 # -----------------------------
-def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) -> float:
+def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, reward_config: dict) -> float:
     """
     Reward shaping for docking.
 
@@ -246,9 +106,10 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
         "alpha": 20.0,           # weight on progress term (prev_dist - new_dist)
     },
     """
-    r_cfg = CONFIG["reward"]
+    r_cfg = reward_config
 
     w_u               = r_cfg["w_u"]
+    w_pos               = r_cfg["w_pos"]
     dock_bonus        = r_cfg["dock_bonus"]
     dock_tol_pos      = r_cfg["dock_tol_pos"]
     dock_tol_vel      = r_cfg["dock_tol_vel"]
@@ -259,6 +120,7 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
     # State: [x, y, z, xdot, ydot, zdot]
     pos_prev = x_prev[:3]
     pos_next = x_next[:3]
+    vel_prev = x_prev[:3]
     vel_next = x_next[3:]
 
     # ---- 1. Progress term: positive if we move closer, negative if we move away ----
@@ -281,6 +143,11 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
         np.linalg.norm(vel_next) > v_impact_thresh):
         r -= big_crash_penalty
 
+    # ---- 5. Location penalty: close but too fast ----
+    dist = sum(abs(x_next[:3]))
+    # progress  = prev_dist - new_dist          # >0 if closer, <0 if farther
+    r -= w_pos * dist
+
     # if progress > 0:
     # print(r)
     return r
@@ -290,20 +157,33 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray) ->
 # Main closed-loop sim
 # -----------------------------
 def run_closed_loop_episode(
-    dt: float = CONFIG["dt"],
-    N: int = CONFIG["N"],
-    mean_motion: float = CONFIG["mean_motion"],
-    sigma_accel_truth: float = CONFIG["sigma_accel_truth"],
-    sigma_accel_model: float = CONFIG["sigma_accel_model"],
-    sigma_meas_pos: float = CONFIG["sigma_meas_pos"],
-    seed: int = 42,
-    debug = True
+    config: dict,
+    seed = 42,
+    * ,
+    debug = True,
+    dt = None,
+    N = None,
+    mean_motion = None,
+    sigma_accel_truth = None,
+    sigma_accel_model = None,
+    sigma_meas_pos = None,
+    n_actions = None
 ):
     """
     Run one closed-loop rendezvous episode.
     """
 
     rng = np.random.default_rng(seed)
+
+    seed = seed if seed else config["seed"]
+    debug = True,
+    dt = dt if dt else config["dt"]
+    N = N if N else config["N"]
+    mean_motion = mean_motion if mean_motion else config["mean_motion"]
+    sigma_accel_truth = sigma_accel_truth if sigma_accel_truth else config["sigma_accel_truth"]
+    sigma_accel_model = sigma_accel_model if sigma_accel_model else config["sigma_accel_model"]
+    sigma_meas_pos = sigma_meas_pos if sigma_meas_pos else config["sigma_meas_pos"]
+    n_actions = n_actions if n_actions else config["n_actions"]
 
     # ------------------------------
     # 1) Set up dynamics + satellite
@@ -315,10 +195,10 @@ def run_closed_loop_episode(
     )
 
     sim = SimParams(
-        dt=CONFIG["dt"],
+        dt=dt,
         n_steps=N,
         noise=noise,
-        mean_motion_rad_s=CONFIG["mean_motion"],
+        mean_motion_rad_s=config["mean_motion"],
     )
 
     # Two thrusters: fine and coarse
@@ -331,7 +211,7 @@ def run_closed_loop_episode(
     sat = SatParams(mass_kg=mass_kg, thrusters=thrusters)
 
     # Initial true state
-    x0_true = CONFIG["x0_true"].copy()
+    x0_true = config["x0_true"].copy()
 
     # Build dynamics object with truth/model mismatch in Q and n
     hcw = HCWDynamics_3DOF(
@@ -365,8 +245,8 @@ def run_closed_loop_episode(
     # -----------------------------
     # 3) EKF
     # -----------------------------
-    x0_hat = x0_true + CONFIG["x0_hat_offset"]
-    P0 = np.diag(CONFIG["P0_diag"])
+    x0_hat = x0_true + config["x0_hat_offset"]
+    P0 = np.diag(config["P0_diag"])
 
     ekf_model = LinearEkf(
         F=Ad_model,
@@ -380,10 +260,9 @@ def run_closed_loop_episode(
     # -----------------------------
     # 4) POMDP + MCTS setup
     # -----------------------------
-    n_actions = 24
-    actions = np.arange(n_actions + 1) 
-
-    r_cfg = CONFIG["reward"]
+    
+    actions = np.arange(n_actions) 
+    r_cfg = config["reward"]
     dock_tol_pos = r_cfg["dock_tol_pos"]
     dock_tol_vel = r_cfg["dock_tol_vel"]
 
@@ -423,7 +302,7 @@ def run_closed_loop_episode(
         o = H @ s_next
 
         # Reward based on next state + command
-        r = compute_reward(s, s_next, u_cmd)
+        r = compute_reward(s, s_next, u_cmd, config["reward"])
 
         return s_next, r, o
 
@@ -440,11 +319,11 @@ def run_closed_loop_episode(
 
     planner = MCTS(
         problem=pomdp_problem,
-        depth=8,       # slightly deeper planning horizon
-        num_sims=80,   # more simulations for better decisions
+        depth=6,       # slightly deeper planning horizon
+        num_sims=100,   # more simulations for better decisions
         c=1.0,
         rollout=None,
-        rollout_depth=5,
+        rollout_depth=3,
     )
 
     # -----------------------------
@@ -468,7 +347,7 @@ def run_closed_loop_episode(
     # Simple heuristic docking override
     # ----------------------------------
     # Needed to add a controller because the results were really bad without it
-    def docking_heuristic(s: np.ndarray, a_mcts: int) -> int:
+    def docking_heuristic(s: np.ndarray, a_mcts: int, config: dict) -> int:
         """
         Very simple controller that overrides MCTS if needed.
         Uses true state s = [x,y,z,xd,yd,zd].
@@ -481,7 +360,7 @@ def run_closed_loop_episode(
         x = s[0]
         vx = s[3]
 
-        dock_cfg = CONFIG["reward"]
+        dock_cfg = config["reward"]
         pos_tol = dock_cfg["dock_tol_pos"]
         vel_tol = dock_cfg["dock_tol_vel"]
 
@@ -521,13 +400,14 @@ def run_closed_loop_episode(
         # ---- DOCKING STOP CONDITION (PASTE THIS HERE) ----
         pos = s_true[:3]
         vel = s_true[3:]
-        dock_cfg = CONFIG["reward"]
+        dock_cfg = config["reward"]
 
         if (np.linalg.norm(pos) < dock_cfg["dock_tol_pos"] and
             np.linalg.norm(vel) < dock_cfg["dock_tol_vel"]):
             # Once docked, force coast action forever
             a_k = 0
             actions_log[k] = 0
+            break
     # ---------------------------------------------------
 
         # Commanded accel
@@ -539,7 +419,7 @@ def run_closed_loop_episode(
         # ---- DEBUG: first few steps
         if debug and k % 10 == 0:
             print(
-                f"[DEBUG] k={k}, x = {s_true[0]:8.3f} m, "
+                f"[DEBUG] k={k}, x = {np.linalg.norm(s_next[:3])} m, "
                 f"u_x = {u_cmd[0]:+8.3e} m/s^2, "
                 f"x_next = {s_next[0]:8.3f} m, "
                 f"a_k = {a_k}, "
@@ -564,8 +444,8 @@ def run_closed_loop_episode(
         rewards_log[k] = r_k
         pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
 
-        if r_k == 0:
-            break
+        # if r_k == 0:
+        #     break
 
     results = {
         "X_true": X_true,
@@ -582,6 +462,56 @@ def run_closed_loop_episode(
 # -------------------------------------------------------------------------------------------------------------------------------------------------
 #               MAIN FUNCTION
 # -------------------------------------------------------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------
+# Simulation Variables
+# -------------------------------------------------------
+# Still need to work on tuning the simulation for better results
+# All variables are labeled and described so it is easier to understand and change
+CONFIG = {
+    # --- simulation setup ---
+    "dt": 1.0,                     # [s] simulation time step
+    "N": 600,                      # number of time steps (horizon = N * dt secs) Can make it longer for better results
+    "initial_state": np.zeros(6),  # 6-state vector [x,y,z,xdot,ydot,zdot]
+
+    # --- process / measurement noise scales (for Q and R) ---
+    "sigma_pos": 10.0,             # [m] (not used directly here)
+    "sigma_vel": 0.1,              # [m/s]
+    "sigma_accel": 0.01,           # [m/s^2]
+    "R_meas": np.diag([10.0, 10.0, 10.0]),  # legacy; EKF uses sigma_meas_pos below
+    "mean_motion": 0.0011,         # [rad/s] HCW mean motion n
+
+    "sigma_accel_truth": 1e-5,     # [m/s^2] accel noise std for TRUE process noise Q
+    "sigma_accel_model": 2e-5,     # [m/s^2] accel noise std for EKF model Q
+    "sigma_meas_pos": 1.0,         # [m] per-axis position noise std for EKF R
+
+    # --- initial state and belief (EKF) ---
+    # Dispersing 200m and 1 m/s (2^6 = 64 runs)
+    # "x0_true": np.array([120.0, -45.0, 67.0, -2.0, -5.0, 17.0]),   # start 50 m along x
+    "x0_true": np.array([50.0, 50.0, 52.0, 0.0, 0.0, 0.0]),   # start 50 m along x
+    # "x0_hat_offset": np.array([-9.0, 12.0, 1.0, -4.0, 0.0, 0.0]),
+    "x0_hat_offset": np.array([0.0, 0.0, -10.0, 0.0, 0.0, 0.0]),   # start 50 m along x
+    "P0_diag": np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0]),
+
+    # --- reward shaping for the POMDP / MCTS ---
+    # See reward function later in the code
+    "reward": {
+        "w_pos": 10.0,          # weight on ||position||^2
+        "w_vel": 0.05,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
+        "w_u": 1e-6,            # weight on ||u||^2
+        "dock_bonus": 3000.0,  # big bonus when inside docking tolerances
+        "dock_tol_pos": 2.0,    # [m]
+        "dock_tol_vel": 0.3,   # [m/s]
+        "v_impact_thresh": 1.0, # [m/s] inside tol_pos but faster than this → crash
+        "big_crash_penalty": 5000.0,
+        "alpha": 200.0,           # weight on progress term (prev_dist - new_dist)
+    },
+
+    "n_actions": 7
+}
+
+
+
 
 if __name__ == "__main__":
     def main():
@@ -605,7 +535,7 @@ if __name__ == "__main__":
             print(f"Loaded with {res["N"]} steps")
             
         else: # Else just runs
-            res = run_closed_loop_episode(N=12000, debug=debug)
+            res = run_closed_loop_episode(config=CONFIG, debug=debug, N=6000)
             print(f"Ran with {res["N"]} steps")
 
         if "save" in args:
@@ -633,7 +563,7 @@ if __name__ == "__main__":
         print(f"Total reward:           {np.sum(rewards):.3f}")
         plt.plot(X_true[:,:3])
         plt.show()
-        plt.plot(X_hat)
+        plt.plot(X_true[:,3:])
         plt.show()
         plt.scatter(np.arange(len(actions)), actions)
         plt.show()
