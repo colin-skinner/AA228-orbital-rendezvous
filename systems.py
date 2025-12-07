@@ -221,7 +221,7 @@ def run_closed_loop_episode(
     sat = SatParams(mass_kg=500.0, thrusters=thrusters)
 
     # Initial true state
-    x0_true = config["x0_true"].copy()
+    x0_true = np.array(config["x0_true"]).copy()
 
     # Build dynamics object with truth/model mismatch in Q and n
     hcw = HCWDynamics_3DOF(
