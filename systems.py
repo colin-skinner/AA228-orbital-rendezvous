@@ -155,10 +155,6 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
     speed = np.linalg.norm(vel_next)
     r -= w_vel * speed**2
 
-    #  # ---- 6. Docking heuristic KE reward ----
-    # if np.linalg.norm(pos_next) < dock_tol_pos*2:
-    #     r -= 10.0*speed**2
-
     # if progress > 0:
     # print(r)
     return r
@@ -187,7 +183,7 @@ def run_closed_loop_episode(
     rng = np.random.default_rng(seed)
 
     seed = seed if seed else config["seed"]
-    debug = True,
+    debug = debug
     dt = dt if dt else config["dt"]
     N = N if N else config["N"]
     mean_motion = mean_motion if mean_motion else config["mean_motion"]
