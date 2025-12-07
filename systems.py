@@ -365,16 +365,6 @@ def run_closed_loop_episode(
         a_k = planner(belief_for_planner, h_for_planner)
         actions_log[k] = a_k
 
-        # if np.linalg.norm(pos) < 5.0:
-        #     # oppose velocity
-        #     a_k = docking_heuristic(s_true, a_k, config)
-        #     a_k_vel = 0
-        #     if abs(s_true[3]) > 0.05:  # x velocity
-        #         a_k_vel = 1 if s_true[3] < 0 else 2
-        #     a_k = a_k_vel
-
-        # a_k = docking_heuristic(s_true, a_k, config)
-
         # ---- DOCKING STOP CONDITION (PASTE THIS HERE) ----
         
         dock_cfg = config["reward"]
@@ -420,10 +410,6 @@ def run_closed_loop_episode(
         X_hat[k + 1] = belief.x
         rewards_log[k] = r_k
         pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
-
-        # if pos_norm < dock_cfg["dock_tol_pos"] and vel_norm < dock_cfg["dock_tol_vel"]:
-        #     actions_log[k:] = 0
-        #     break
 
     results = {
         "X_true": X_true,
