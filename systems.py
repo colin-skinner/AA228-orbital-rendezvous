@@ -70,6 +70,7 @@ def manual_hcw_test(config: dict):
 def action_to_accel(action: int, sat: SatParams) -> np.ndarray:
     
     a = sat.thrusters[0].accel_m_s2
+    b = sat.thrusters[1].accel_m_s2
     a_to_out = {
         0: [0,0,0],
         1: [a,0,0],
@@ -77,7 +78,13 @@ def action_to_accel(action: int, sat: SatParams) -> np.ndarray:
         3: [0,a,0],
         4: [0,-a,0],
         5: [0,0,a],
-        6: [0,0,-a]
+        6: [0,0,-a],
+        7: [b,0,0],
+        8: [-b,0,0],
+        9: [0,b,0],
+        10: [0,-b,0],
+        11: [0,0,b],
+        12: [0,0,-b]
     }
     return a_to_out[action]
 
@@ -110,6 +117,7 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
 
     w_u               = r_cfg["w_u"]
     w_pos               = r_cfg["w_pos"]
+    w_vel               = r_cfg["w_vel"]
     dock_bonus        = r_cfg["dock_bonus"]
     dock_tol_pos      = r_cfg["dock_tol_pos"]
     dock_tol_vel      = r_cfg["dock_tol_vel"]
@@ -143,10 +151,13 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
         np.linalg.norm(vel_next) > v_impact_thresh):
         r -= big_crash_penalty
 
-    # ---- 5. Location penalty: close but too fast ----
-    dist = sum(abs(x_next[:3]))
-    # progress  = prev_dist - new_dist          # >0 if closer, <0 if farther
-    r -= w_pos * dist
+    # ---- 5. Velocity penalty: too fast ----
+    speed = np.linalg.norm(vel_next)
+    r -= w_vel * speed**2
+
+    #  # ---- 6. Docking heuristic KE reward ----
+    # if np.linalg.norm(pos_next) < dock_tol_pos*2:
+    #     r -= 10.0*speed**2
 
     # if progress > 0:
     # print(r)
@@ -198,7 +209,7 @@ def run_closed_loop_episode(
         dt=dt,
         n_steps=N,
         noise=noise,
-        mean_motion_rad_s=config["mean_motion"],
+        mean_motion_rad_s=mean_motion,
     )
 
     # Two thrusters: fine and coarse
@@ -207,8 +218,7 @@ def run_closed_loop_episode(
         ThrusterParams(thrust_N=20.0, m_dot_kg_s=4e-3),  # coarse
     ]
     # Larger mass → smaller accelerations → easier to control
-    mass_kg = 500.0
-    sat = SatParams(mass_kg=mass_kg, thrusters=thrusters)
+    sat = SatParams(mass_kg=500.0, thrusters=thrusters)
 
     # Initial true state
     x0_true = config["x0_true"].copy()
@@ -278,10 +288,9 @@ def run_closed_loop_episode(
         # If already docked, stay there (absorbing state)
         if np.linalg.norm(pos) < dock_tol_pos and np.linalg.norm(vel) < dock_tol_vel:
             s_next = s.copy()
-            u_zero = np.zeros(3)
             o = H @ s_next
-            r = 0.0  # no extra cost/bonus after docking
-            return s_next, r, o
+            # no extra cost/bonus after docking
+            return s_next, 0.0, o
 
         # Otherwise, apply commanded acceleration
         u_cmd = action_to_accel(a, sat)
@@ -319,7 +328,7 @@ def run_closed_loop_episode(
 
     planner = MCTS(
         problem=pomdp_problem,
-        depth=6,       # slightly deeper planning horizon
+        depth=5,       # slightly deeper planning horizon
         num_sims=100,   # more simulations for better decisions
         c=1.0,
         rollout=None,
@@ -343,63 +352,35 @@ def run_closed_loop_episode(
     h = ()
 
 
-    # ----------------------------------
-    # Simple heuristic docking override
-    # ----------------------------------
-    # Needed to add a controller because the results were really bad without it
-    def docking_heuristic(s: np.ndarray, a_mcts: int, config: dict) -> int:
-        """
-        Very simple controller that overrides MCTS if needed.
-        Uses true state s = [x,y,z,xd,yd,zd].
-
-        Goal:
-        - If we are far in +x, thrust along -x (action 2).
-        - When we are closer, switch to fine thrust (action 1).
-        - If we are inside docking box and slow, coast (action 0).
-        """
-        x = s[0]
-        vx = s[3]
-
-        dock_cfg = config["reward"]
-        pos_tol = dock_cfg["dock_tol_pos"]
-        vel_tol = dock_cfg["dock_tol_vel"]
-
-        # If already docked region: coast
-        if abs(x) < pos_tol and abs(vx) < vel_tol:
-            return 0
-
-        # If we are still many meters away, push hard toward origin
-        if x > 5.0:
-            return 2   # coarse thrust along -x
-        if x > pos_tol:
-            return 1   # fine thrust along -x
-
-        # If we overshoot to negative x, gently push back
-        if x < -5.0:
-            return 2   # thrust along +x (we'll interpret sign via action_to_accel if needed)
-        if x < -pos_tol:
-            return 1
-
-        # Otherwise, use whatever MCTS suggested
-        return a_mcts
-
     # -----------------------------
     # 6) Closed-loop simulation
     # -----------------------------
     s_true = x0_true.copy()
 
     for k in range(N):
-        # Belief passed to planner
-        belief_for_planner = State(x=belief.x.copy(), P=belief.P.copy())
 
-        # Choose action with MCTS
-        belief_for_planner = State(x=belief.x.copy(), P=belief.P.copy())
-        a_k = planner(belief_for_planner, h)
-        actions_log[k] = a_k
-
-        # ---- DOCKING STOP CONDITION (PASTE THIS HERE) ----
         pos = s_true[:3]
         vel = s_true[3:]
+    
+
+        # ---- Choosing action ----
+        belief_for_planner = State(x=belief.x.copy(), P=belief.P.copy())
+        h_for_planner = h[-100:]  # only last 50 steps
+        a_k = planner(belief_for_planner, h_for_planner)
+        actions_log[k] = a_k
+
+        # if np.linalg.norm(pos) < 5.0:
+        #     # oppose velocity
+        #     a_k = docking_heuristic(s_true, a_k, config)
+        #     a_k_vel = 0
+        #     if abs(s_true[3]) > 0.05:  # x velocity
+        #         a_k_vel = 1 if s_true[3] < 0 else 2
+        #     a_k = a_k_vel
+
+        # a_k = docking_heuristic(s_true, a_k, config)
+
+        # ---- DOCKING STOP CONDITION (PASTE THIS HERE) ----
+        
         dock_cfg = config["reward"]
 
         if (np.linalg.norm(pos) < dock_cfg["dock_tol_pos"] and
@@ -444,7 +425,8 @@ def run_closed_loop_episode(
         rewards_log[k] = r_k
         pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
 
-        # if r_k == 0:
+        # if pos_norm < dock_cfg["dock_tol_pos"] and vel_norm < dock_cfg["dock_tol_vel"]:
+        #     actions_log[k:] = 0
         #     break
 
     results = {
@@ -478,36 +460,35 @@ CONFIG = {
     "sigma_pos": 10.0,             # [m] (not used directly here)
     "sigma_vel": 0.1,              # [m/s]
     "sigma_accel": 0.01,           # [m/s^2]
-    "R_meas": np.diag([10.0, 10.0, 10.0]),  # legacy; EKF uses sigma_meas_pos below
     "mean_motion": 0.0011,         # [rad/s] HCW mean motion n
 
-    "sigma_accel_truth": 1e-5,     # [m/s^2] accel noise std for TRUE process noise Q
+    "sigma_accel_truth": 5e-1,     # [m/s^2] accel noise std for TRUE process noise Q
     "sigma_accel_model": 2e-5,     # [m/s^2] accel noise std for EKF model Q
     "sigma_meas_pos": 1.0,         # [m] per-axis position noise std for EKF R
 
     # --- initial state and belief (EKF) ---
     # Dispersing 200m and 1 m/s (2^6 = 64 runs)
-    # "x0_true": np.array([120.0, -45.0, 67.0, -2.0, -5.0, 17.0]),   # start 50 m along x
-    "x0_true": np.array([50.0, 50.0, 52.0, 0.0, 0.0, 0.0]),   # start 50 m along x
-    # "x0_hat_offset": np.array([-9.0, 12.0, 1.0, -4.0, 0.0, 0.0]),
-    "x0_hat_offset": np.array([0.0, 0.0, -10.0, 0.0, 0.0, 0.0]),   # start 50 m along x
+    "x0_true": np.array([10.0, 20.0, 22.0, 0.0, 0.0, 0.0]),  # start ~50 m away
+    "x0_hat_offset": np.array([0.0, 0.0, -10.0, 0.0, 0.0, 0.0]),
+    # "x0_true": np.array([20.0, 10.0, 10.0, 0.0, 0.0, 0.0]),   # start 50 m along x
+    # "x0_hat_offset": np.array([0.0, 0.0, -10.0, 0.0, 0.0, 0.0]),   # start 50 m along x
     "P0_diag": np.array([10.0, 10.0, 10.0, 1.0, 1.0, 1.0]),
 
     # --- reward shaping for the POMDP / MCTS ---
     # See reward function later in the code
     "reward": {
-        "w_pos": 10.0,          # weight on ||position||^2
-        "w_vel": 0.05,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
-        "w_u": 1e-6,            # weight on ||u||^2
+        "w_pos": 5.0,          # weight on ||position||^2
+        "w_vel": 0.1,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
+        "w_u": 1e-6,            # weight on ||u||^2 for input
         "dock_bonus": 3000.0,  # big bonus when inside docking tolerances
         "dock_tol_pos": 2.0,    # [m]
-        "dock_tol_vel": 0.3,   # [m/s]
+        "dock_tol_vel": 0.2,   # [m/s]
         "v_impact_thresh": 1.0, # [m/s] inside tol_pos but faster than this → crash
         "big_crash_penalty": 5000.0,
         "alpha": 200.0,           # weight on progress term (prev_dist - new_dist)
     },
 
-    "n_actions": 7
+    "n_actions": 13
 }
 
 
@@ -535,7 +516,7 @@ if __name__ == "__main__":
             print(f"Loaded with {res["N"]} steps")
             
         else: # Else just runs
-            res = run_closed_loop_episode(config=CONFIG, debug=debug, N=6000)
+            res = run_closed_loop_episode(config=CONFIG, debug=debug, N=1500)
             print(f"Ran with {res["N"]} steps")
 
         if "save" in args:
@@ -580,9 +561,17 @@ if __name__ == "__main__":
 
 
 
+"""
+- 7 actions
+- MCTS parameters (6 step, 100 sims, rollout 3)
+- truncate history to 50 steps
+"""
 
 
+"""
 
+# With 13 actions
+"x0_true": np.array([10.0, 50.0, 52.0, 0.0, 0.0, 0.0]),  # start ~50 m away
+"x0_hat_offset": np.array([0.0, 0.0, -10.0, 0.0, 0.0, 0.0]),
 
-
-    
+"""
