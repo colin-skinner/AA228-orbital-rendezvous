@@ -117,6 +117,7 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
 
     w_u               = r_cfg["w_u"]
     w_pos               = r_cfg["w_pos"]
+    w_damp               = r_cfg["w_damp"]
     w_vel               = r_cfg["w_vel"]
     dock_bonus        = r_cfg["dock_bonus"]
     dock_tol_pos      = r_cfg["dock_tol_pos"]
@@ -154,6 +155,9 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
     # ---- 5. Velocity penalty: too fast ----
     speed = np.linalg.norm(vel_next)
     r -= w_vel * speed**2
+
+    # ---- 6. Velocity penalty: thrusting that increases speed ----
+    r -= w_damp * np.dot(u_cmd, vel_prev) 
 
     # if progress > 0:
     # print(r)
@@ -357,7 +361,8 @@ def run_closed_loop_episode(
 
         pos = s_true[:3]
         vel = s_true[3:]
-    
+        X_true[k + 1] = s_true
+        pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
 
         # ---- Choosing action ----
         belief_for_planner = State(x=belief.x.copy(), P=belief.P.copy())
@@ -406,10 +411,8 @@ def run_closed_loop_episode(
 
         # Log
         s_true = s_next
-        X_true[k + 1] = s_true
         X_hat[k + 1] = belief.x
         rewards_log[k] = r_k
-        pos_error_norm[k + 1] = np.linalg.norm(s_true[:3])
 
     results = {
         "X_true": X_true,
@@ -461,6 +464,7 @@ CONFIG = {
     "reward": {
         "w_pos": 5.0,          # weight on ||position||^2
         "w_vel": 0.1,           # STRONGER weight on ||velocity||^2 to avoid huge speeds
+        "w_damp": 0.05,           # Penalizes inputs that increase velocity
         "w_u": 1e-6,            # weight on ||u||^2 for input
         "dock_bonus": 3000.0,  # big bonus when inside docking tolerances
         "dock_tol_pos": 2.0,    # [m]
