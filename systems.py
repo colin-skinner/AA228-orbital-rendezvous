@@ -164,6 +164,7 @@ def compute_reward(x_prev: np.ndarray, x_next: np.ndarray, u_cmd: np.ndarray, re
     return r
 
 
+
 # -----------------------------
 # Main closed-loop sim
 # -----------------------------
